@@ -1,0 +1,5 @@
+RESPONSE_TYPE = "one_code"
+GRANT_TYPE_AUTHORIZATION_CODE = "one_authorization_code"
+GRANT_TYPE_ACCESS_TOKEN_IDENTIFY = "one_access_token_identify"
+DEFAULT_SCOPE = "test"
+DEFAULT_STATE = "testState"
