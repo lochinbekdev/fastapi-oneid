@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fastapi-oneid"
-version = "0.1.0"
+version = "0.2.0"
 description = "Professional OneID integration package for FastAPI applications"
 readme = "README.md"
 license = { text = "MIT" }

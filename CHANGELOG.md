@@ -2,7 +2,7 @@
 
 All notable changes to `fastapi-oneid` will be documented in this file.
 
-## Unreleased
+## 0.2.0 - 2026-04-28
 
 - Added official OneID security flow with generated and verified OAuth state
 - Enforced redirect URI whitelist and disabled loopback redirect URIs
