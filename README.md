@@ -1,37 +1,8 @@
 # fastapi-oneid
 
-`fastapi-oneid` is a self-developed OneID integration package for FastAPI applications. It gives you a clean, reusable way to start the OneID authorization flow, exchange the returned code for an access token, fetch the authenticated user profile, and hand the final login step back to your own application.
-
-The package is designed for teams that want to integrate OneID quickly without rebuilding the HTTP flow for every project.
-
-## What This Package Does
-
-- Generates a OneID authorization URL
-- Redirects users to the OneID login page
-- Exchanges the returned `code` for a OneID access token
-- Fetches user information from OneID using the access token
-- Exposes ready-to-mount FastAPI routers for web and API flows
-- Lets your application finish local authentication through a callback handler
-
-## What This Package Does Not Do
-
-- It does not create local users automatically
-- It does not issue JWTs or sessions automatically
-- It does not manage your database models
-- It does not bypass OneID redirect URI restrictions
-
-Your application remains responsible for mapping the OneID user to a local account and issuing your own access token or session.
-
-## Requirements
-
-- Python `3.11+`
-- FastAPI `0.115+`
-- OneID client credentials
-- A callback URL registered in your OneID client configuration
+`fastapi-oneid` is a reusable FastAPI package for integrating with Uzbekistan OneID SSO using the official OneID OAuth2 flow. The package handles authorization URL generation, state protection, token exchange, user-info lookup, and optional logout, while your application remains responsible for local user mapping and JWT or session issuance.
 
 ## Installation
-
-Install from PyPI:
 
 ```bash
 pip install fastapi-oneid
@@ -43,37 +14,54 @@ For local development:
 pip install -e .[dev]
 ```
 
-For release tooling:
-
-```bash
-pip install -e .[release]
-```
-
-## Configuration
+## Environment Settings
 
 The package reads configuration from environment variables.
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `ONE_ID_SSO_URL` | Yes | OneID authorization/token endpoint URL |
-| `ONE_ID_CLIENT_ID` | Yes | Your OneID client identifier |
-| `ONE_ID_CLIENT_SECRET` | Yes | Your OneID client secret |
-| `ONE_ID_CLIENT_SCOPE` | No | Scope to send to OneID. Default: `test` |
-| `ONE_ID_CLIENT_STATE` | No | State value to send to OneID. Default: `testState` |
+| `ONE_ID_SSO_URL` | Yes | OneID authorization and token endpoint, usually `https://sso.egov.uz/sso/oauth/Authorization.do` |
+| `ONE_ID_CLIENT_ID` | Yes | OneID client identifier |
+| `ONE_ID_CLIENT_SECRET` | Yes | OneID client secret |
+| `ONE_ID_SCOPE` | Yes | OneID scope provided by the operator |
+| `ONE_ID_ALLOWED_REDIRECT_URIS` | Yes | JSON array or comma-separated list of allowed redirect URIs |
+| `ONE_ID_DEFAULT_REDIRECT_URI` | Yes | Default redirect URI, must be included in the allow-list |
+| `ONE_ID_TIMEOUT` | No | Upstream request timeout in seconds. Default: `5.0` |
+| `ONE_ID_DEBUG` | No | If `true`, raw OneID payloads may be returned when no handler is configured. Default: `false` |
 
 Example `.env`:
 
 ```dotenv
 ONE_ID_SSO_URL=https://sso.egov.uz/sso/oauth/Authorization.do
-ONE_ID_CLIENT_ID=your-client-id
-ONE_ID_CLIENT_SECRET=your-client-secret
-ONE_ID_CLIENT_SCOPE=test
-ONE_ID_CLIENT_STATE=testState
+ONE_ID_CLIENT_ID=myportal
+ONE_ID_CLIENT_SECRET=super-secret
+ONE_ID_SCOPE=myportal
+ONE_ID_ALLOWED_REDIRECT_URIS=["https://backend.example.com/one-id/access","https://frontend.example.com/auth/oneid/callback"]
+ONE_ID_DEFAULT_REDIRECT_URI=https://backend.example.com/one-id/access
+ONE_ID_TIMEOUT=5.0
+ONE_ID_DEBUG=false
 ```
 
-## Quick Start
+## Official OneID Grant Values
 
-Create a FastAPI app and mount the provided routers.
+The package uses the OneID values required by the official technological guide:
+
+- Authorization request: `response_type=one_code`
+- Token exchange: `grant_type=one_authorization_code`
+- User info request: `grant_type=one_access_token_identify`
+- Logout request: `grant_type=one_log_out`
+
+## Redirect URI Whitelist
+
+OneID redirect URIs are not accepted freely from the client. Every requested redirect URI must:
+
+- be present in `ONE_ID_ALLOWED_REDIRECT_URIS`
+- be an absolute HTTP(S) URL
+- not use `localhost`, `127.0.0.1`, `::1`, or other loopback hosts
+
+The package also binds each generated OAuth `state` to the selected redirect URI. During callback and token exchange, the same redirect URI must be used again or the request is rejected.
+
+## Quick Start
 
 ```python
 from fastapi import FastAPI, Request
@@ -83,16 +71,15 @@ app = FastAPI(title="My OneID Integration")
 
 
 async def auth_handler(payload: OneIDAuthPayload, request: Request) -> dict:
-    oneid_user = payload.user
-
-    # 1. Find or create a local user
+    # 1. Find or create your local user
     # 2. Issue your own JWT or session
-    # 3. Return your final login response
-
+    # 3. Return the response expected by your frontend
     return {
-        "token": "your-project-jwt",
-        "user": oneid_user,
-        "oneid_token": payload.token,
+        "token": "project-jwt",
+        "user": {
+            "pin": payload.user.pin,
+            "full_name": payload.user.full_name,
+        },
     }
 
 
@@ -100,19 +87,9 @@ app.include_router(create_web_router(handler=auth_handler))
 app.include_router(create_api_router(handler=auth_handler))
 ```
 
-Run the app:
+## Web Flow Example
 
-```bash
-uvicorn main:app --reload
-```
-
-## Integration Modes
-
-### 1. Web Flow
-
-Use the built-in redirect flow when your backend receives the callback directly.
-
-Endpoints:
+Default web endpoints:
 
 - `GET /one-id/login`
 - `GET /one-id/access`
@@ -120,56 +97,65 @@ Endpoints:
 Flow:
 
 1. User opens `/one-id/login`
-2. The package redirects the user to OneID
-3. OneID redirects back to `/one-id/access?code=...`
-4. The package exchanges the code and fetches the user
-5. Your `auth_handler` decides how to log the user into your application
+2. Package validates the redirect URI and generates a single-use `state`
+3. User is redirected to OneID
+4. OneID redirects back to `/one-id/access?code=...&state=...`
+5. Package verifies `state`, exchanges `code` for `access_token`, fetches user info, and passes the result to your handler
 
-This is usually the simplest approach for server-rendered or backend-controlled login flows.
+Example login URL:
 
-### 2. API Flow
+```text
+GET /one-id/login
+```
 
-Use the API flow when your frontend wants to control the browser redirect.
+Optional alternative redirect URI from the whitelist:
 
-Endpoints:
+```text
+GET /one-id/login?redirect_uri=https://frontend.example.com/auth/oneid/callback
+```
+
+## API Flow Example
+
+Default API endpoints:
 
 - `GET /api/one-id/url`
-- `POST /api/one-id/url`
-- `POST /api/one-id/token`
+- `POST /api/one-id/url` (compatibility alias)
 - `GET /api/one-id/access`
+- `POST /api/one-id/token`
+- `POST /api/one-id/logout`
 
 Flow:
 
 1. Frontend requests `/api/one-id/url`
-2. Backend returns a OneID authorization URL
-3. Frontend redirects the user to that URL
-4. OneID redirects to the callback URL registered for your client
-5. Frontend sends the returned `code` to `/api/one-id/token`
-6. The package resolves the OneID user and calls your `auth_handler`
+2. Backend returns a OneID authorization URL with a generated `state`
+3. Frontend redirects the user to OneID
+4. OneID redirects to the registered callback URI with `code` and `state`
+5. Frontend sends `code` and `state` to `/api/one-id/token`
+6. Package verifies the stored `state`, resolves the OneID user, and calls your handler
 
-## Default Routes
+Requesting the authorization URL:
 
-By default, the package exposes the following endpoints:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/one-id/login` | Redirect user to OneID |
-| `GET` | `/one-id/access` | Handle web callback and resolve user |
-| `GET` | `/api/one-id/url` | Return authorization URL |
-| `POST` | `/api/one-id/url` | Return authorization URL |
-| `POST` | `/api/one-id/token` | Exchange code and resolve user |
-| `GET` | `/api/one-id/access` | Return received callback code |
-
-You can override the router prefix:
-
-```python
-app.include_router(create_web_router(prefix="/auth/oneid"))
-app.include_router(create_api_router(prefix="/api/auth/oneid"))
+```bash
+curl "https://backend.example.com/api/one-id/url?redirect_uri=https://frontend.example.com/auth/oneid/callback"
 ```
 
-## Handler Contract
+Exchanging the callback code:
 
-Your handler receives a `OneIDAuthPayload` object and the current FastAPI `Request`.
+```bash
+curl -X POST "https://backend.example.com/api/one-id/token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "oneid-returned-code",
+    "state": "oneid-returned-state",
+    "redirect_uri": "https://frontend.example.com/auth/oneid/callback"
+  }'
+```
+
+The optional `redirect_uri` on `/api/one-id/token` is validated against the state-bound redirect URI. If it does not match, the request is rejected.
+
+## Handler Example
+
+Your handler receives a typed `OneIDAuthPayload` and the FastAPI `Request`.
 
 ```python
 from fastapi import Request
@@ -177,102 +163,48 @@ from fastapi_oneid import OneIDAuthPayload
 
 
 async def auth_handler(payload: OneIDAuthPayload, request: Request) -> dict:
+    user = payload.user
+
     return {
-        "token": "your-project-jwt",
-        "user": payload.user,
+        "token": "project-jwt",
+        "profile": {
+            "pin": user.pin,
+            "full_name": user.full_name,
+            "is_validated": user.valid,
+        },
     }
 ```
 
-`OneIDAuthPayload` contains:
+The package does not create users, issue JWTs, or manage sessions automatically.
 
-- `code`: the authorization code returned by OneID
-- `redirect_url`: the callback URL used in the flow
-- `token`: the raw token payload returned by OneID
-- `user`: the raw user payload returned by OneID
+## Logout Example
 
-Your handler may return:
-
-- a JSON-serializable `dict`
-- any FastAPI `Response`
-
-## Programmatic Usage
-
-If you want to call OneID without mounting routers, use the low-level client directly.
+Low-level client usage:
 
 ```python
 from fastapi_oneid import OneIDClient, OneIDSettings
 
-settings = OneIDSettings()
-client = OneIDClient(settings=settings)
-
-authorization_url = client.get_authorization_url("https://example.com/callback")
+client = OneIDClient(settings=OneIDSettings())
+logout_response = await client.logout("access-token")
 ```
 
-Available client methods:
-
-- `get_authorization_url(redirect_url, scope=None, state=None)`
-- `exchange_code(code, redirect_url)`
-- `get_user_info(access_token, scope=None)`
-- `resolve_auth_payload(code, redirect_url)`
-- `get_user(code, redirect_url)`
-
-## Example Project
-
-A minimal runnable example is available in:
-
-- `examples/basic_app/main.py`
-
-Run it locally:
+Router usage:
 
 ```bash
-cp .env.example .env
-set -a
-source .env
-set +a
-uvicorn examples.basic_app.main:app --reload --port 8010
-```
-
-Then open:
-
-- `http://127.0.0.1:8010/api/one-id/url`
-- `http://127.0.0.1:8010/one-id/login`
-
-## Common Problems
-
-### `REDIRECT_URI_NOT_ALLOWED`
-
-OneID rejects callback URLs that are not registered for your client.
-
-To fix it:
-
-1. Register your callback URL in OneID
-2. Use the exact same callback URL in the login flow
-3. If you use the API flow, send the same `redirect_url` again when calling `/api/one-id/token`
-
-Example:
-
-```bash
-curl "http://127.0.0.1:8010/api/one-id/url?redirect_url=http://127.0.0.1:3000/callback"
-```
-
-Then:
-
-```bash
-curl -X POST "http://127.0.0.1:8010/api/one-id/token" \
+curl -X POST "https://backend.example.com/api/one-id/logout" \
   -H "Content-Type: application/json" \
-  -d '{
-    "code": "oneid-returned-code",
-    "redirect_url": "http://127.0.0.1:3000/callback"
-  }'
+  -d '{"access_token": "oneid-access-token"}'
 ```
 
-### Missing Environment Variables
+## Production Security Notes
 
-If startup fails with validation errors for `ONE_ID_SSO_URL`, `ONE_ID_CLIENT_ID`, or `ONE_ID_CLIENT_SECRET`, load your environment variables before starting the application.
-
-### Localhost Callback Problems
-
-If OneID does not allow `localhost` or `127.0.0.1` callbacks for your client, use a registered domain or a development tunnel and register that callback in OneID.
+- `state` is generated per login request and verified during callback and token exchange.
+- Raw token payloads are not returned by default. They are only exposed when `ONE_ID_DEBUG=true` and no handler is configured.
+- `client_secret` and `access_token` should never be logged by your application.
+- Package-level timeout defaults to 5 seconds to match the official operational guideline.
+- Configure application-level rate limiting or gateway protection in production.
+- The OneID guide recommends not exceeding `300 requests per minute`.
+- Use HTTPS public domains for registered redirect URIs. Do not rely on `localhost`.
 
 ## Testing
 
@@ -282,49 +214,7 @@ Run the unit tests:
 python -m pytest -v
 ```
 
-The tests mock OneID responses. Real OneID credentials are not required for the test suite.
-
-## Release to PyPI
-
-Build the package:
-
-```bash
-python -m build --no-isolation
-```
-
-Validate package metadata:
-
-```bash
-python -m twine check dist/*
-```
-
-Upload to TestPyPI:
-
-```bash
-python -m twine upload --repository testpypi dist/*
-```
-
-Upload to PyPI:
-
-```bash
-python -m twine upload dist/*
-```
-
-Before publishing:
-
-1. Update `version` in `pyproject.toml`
-2. Run the test suite
-3. Build and check the distribution
-4. Upload to TestPyPI before uploading to PyPI
-
-Recommended verification after upload:
-
-```bash
-python3 -m venv /tmp/fastapi-oneid-check
-source /tmp/fastapi-oneid-check/bin/activate
-pip install fastapi-oneid
-python -c "import fastapi_oneid; print('install ok')"
-```
+The tests mock OneID responses and cover the official grant types, redirect URI whitelist validation, state verification, typed user parsing, logout, and safe default handler behavior.
 
 ## License
 

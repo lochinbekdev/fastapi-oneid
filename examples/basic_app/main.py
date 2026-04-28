@@ -8,8 +8,11 @@ app = FastAPI(title="FastAPI OneID Example")
 async def oneid_handler(payload: OneIDAuthPayload, request: Request) -> dict:
     return {
         "token": "replace-with-project-token",
-        "user": payload.user,
-        "oneid_token": payload.token,
+        "user": {
+            "pin": payload.user.pin,
+            "full_name": payload.user.full_name,
+            "valid": payload.user.valid,
+        },
     }
 
 

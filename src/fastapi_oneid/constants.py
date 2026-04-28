@@ -1,5 +1,8 @@
 RESPONSE_TYPE = "one_code"
 GRANT_TYPE_AUTHORIZATION_CODE = "one_authorization_code"
 GRANT_TYPE_ACCESS_TOKEN_IDENTIFY = "one_access_token_identify"
-DEFAULT_SCOPE = "test"
-DEFAULT_STATE = "testState"
+GRANT_TYPE_LOGOUT = "one_log_out"
+
+DEFAULT_TIMEOUT = 5.0
+DEFAULT_DEBUG = False
+DEFAULT_STATE_TTL = 300
